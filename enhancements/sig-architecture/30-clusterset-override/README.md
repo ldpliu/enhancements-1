@@ -1,5 +1,5 @@
-# Adding Exclusive Key in ManagedClusterSet
- 
+# ManagedClusterSet Override
+
 ## Release Signoff Checklist
  
 - [ ] Enhancement is `implementable`
@@ -21,18 +21,18 @@ There are also raising requirements on using managedClusterSet for the following
 - As a DEV team member, I want to create a managedClusterSet to group clusters based on the middleware enabled on these clusters, so I could run special applications in these clusters.
 
 ## Proposal
-1. Changes on ManagedClusterSet APIs.
+1. Changes on managedClusterSet APIs.
 
-Previouslly, clusterset use label `cluster.open-cluster-management.io/clusterset=<ManagedClusterSet Name>` to select managedclusters. 
+Currently, managedClusterSets use the label `cluster.open-cluster-management.io/clusterset=<ManagedClusterSet Name>` to select managedClusters. 
 
-In this proposal, clusterset could use any label to select managedclusters. Meanwhile, managedClusterSet should be exclusive within a purpose, but for different purposes it can overlap.
+In this proposal, managedClusterSets could use any label to select managedClusters. Meanwhile, managedClusterSets should be exclusive within a purpose, but for different purposes it can overlap.
 
-So, we Add a field `ClusterLabel` into ManagedClusterSet spec
+So, we add a field `ClusterLabel` into managedClusterSet spec
 
 ```go
 type ManagedClusterSetSpec struct {
  // ClusterLabel defines the label which the managedClusterSet will use to select managedClusters.
- // If the filed is not set, we will use "cluster.open-cluster-management.io/clusterset=<ManagedClusterSet Name>" as default value.
+ // If the field is not set, we will use "cluster.open-cluster-management.io/clusterset=<ManagedClusterSet Name>" as default value.
  // This field can not be changed once the managedClusterSet is created.
  // +optional
  // +immutable
@@ -43,19 +43,19 @@ type ManagedClusterSetSpec struct {
 
 2. RBAC change
 
-a. Create a clusterset
-Currently, When a user wants to create a managedClusterSet, he/she only should have `create` permission to the managedClusterSet. 
-After the proposal is applied, the new clusterset may include any managedclusters which have specific label. 
-So we should use a permission to controll the clustetset creation with specific label.
+a. Create a managedClusterSet
+Currently, When a user wants to create a managedClusterSet, he/she should only have `create` permission to the managedClusterSet. 
+After the proposal is applied, the new managedClusterSet may include any managedClusters which have specific labels. 
+So we should use a permission to control the managedClusterSet creation with a specific label.
 
-In order to control the managedclusterset select managedclusters with a specific label, we use a subresource `managedclustersets/clusterlabels` permission. 
-The subresource `managedclustersets/clusterlabels` permission means user could use this label to select clusters in a clusterset.
+In order to control the managedClusterSet select managedClusters with a specific label, we use a subresource `managedclustersets/clusterlabel` permission. 
+The subresource `managedclustersets/clusterlabel` permission means users could use this label to select managedClusters in a managedClusterSet.
 
-So if I want to create a managedClusterSet `apacSet` with ClusterLabel `region:apac`, I must have the following permission.
+So if I want to create a managedClusterSet `apacSet` with `ClusterLabel` `region:apac`, I must have the following permission.
 - `create` permission to managedClusterSet `apacSet`
-- `create` permission to subresource `managedclustersets/clusterlabels` with value `region:apac`
+- `create` permission to subresource `managedclustersets/clusterlabel` with value `region:apac`
 
-The permission should be like:
+The permissions should be like:
 ```yaml
 kind: ClusterRole
 apiVersion: rbac.authorization.k8s.io/v1
@@ -72,18 +72,21 @@ rules:
    verbs: ["create"]
 ```
 
-Note: If I want to create a managedclusterset which `ClusterLabel` is not set, the permission `managedclustersets/clusterlabels` is not needed.
-If I create a managedclusterset with `ClusterLabel` `cluster.open-cluster-management.io/clusterset=<Value>`. The `<Value>` must be clusterset name, if not the request will be forbidden. (Forward Compatibility)
+Note: If I want to create a managedClusterSet which `ClusterLabel` is not set, the permission `managedclustersets/clusterlabel` is not needed.
+If I create a managedClusterSet with `ClusterLabel` `cluster.open-cluster-management.io/clusterset=<Value>`. The `<Value>` must be managedClusterSet name, if not the request will be forbidden. (Forward Compatibility)
 
 
-b. Add a label for managedcluster
-Currently, Anyone who has `update` permission to a managedCluster could update the managedCluster label(except label `cluster.open-cluster-management.io/clusterset=<xxx>`).
-In this proposal, the clusterset could use any label to select managedclusters. So when the managedcluster add a label, it may lead to the cluster added to a clusterset if the clusterset match the label. So we also need an permission to control the managedcluster's label change.
+b. Add a label for managedCluster
+Currently, anyone who has `update` permission to a managedCluster could update the managedCluster label(except label `cluster.open-cluster-management.io/clusterset=<xxx>`).
+In this proposal, the managedClusterSet could use any label to select managedclusters. So when the managedCluster add a label, it may lead to the managedCluster added to a managedClusterSet if the managedClusterSet match the label. So we also need an permission to control the managedCluster's label change.
 
 we use a subresource `managedclusters/label` to control the permission of managedCluster's label change.
 
-So if I want to create a managedCluster named `mc1`, which has a label `region: apac`. 
-I must have the following permission.
+So if I want to create a managedCluster named `mc1`, which has a label `region: apac`. I must have the following permission.
+- `create` permission to managedCluster `mc1`
+- `create` permission to subresource `managedclusters/label` with value `region:apac`
+
+The permissions should be like:
 ```yaml
 kind: ClusterRole
 apiVersion: rbac.authorization.k8s.io/v1
@@ -100,14 +103,14 @@ rules:
    verbs: ["create"]
 ```
 
-Note: If I want to add a label `cluster.open-cluster-management.io/clusterset=<xxx>` to a managedcluster, I should have either the following permissions:
+Note: If I want to add a label `cluster.open-cluster-management.io/clusterset=<xxx>` to a managedCluster, I should have either the following permissions:
 - `create` permission for subresource `managedclustersets/join` with value `<xxx>`.(Forward Compatibility)
 - `create` permission for subresource `managedclustersets/clusterlabel` with value `cluster.open-cluster-management.io/clusterset=<xxx>`
 
 ## Examples
 ### As cluster admin, I want to create a managedClusterSet which includes all clusters in the apac region. Then I can apply certain configurations to all clusters in apac.
-1. As cluster admin, I should give the following permissions to agent(which run in managedclusters and could update related managedcluster object.)
-- `update` permission for related managedcluster
+1. As cluster admin, I should give the following permissions to agent(which run in managedclusters.)
+- `update` permission for related cluster
 - `create`, `update`, `delete` permissions for subresource `managedclusters/label` with value `region=apac`
 
 The permissions should be like:
@@ -126,7 +129,8 @@ rules:
    resourceNames: ["region=apac"]
    verbs: ["create", "update", "delete"]
 ```
-2. For each clusters in the apac region, related agent shoud add a label: `region:apac` to these clusters.
+
+2. For each cluster in the apac region, related agent shoud add a label: `region:apac` to these managedCluster.
 3. As cluster admin, I could create a managedClusterSet to select all clusters in `apac` region
 ```yaml
 apiVersion: cluster.open-cluster-management.io/v1alpha1
@@ -141,9 +145,9 @@ This managedClusterSet includes all clusters with label `region=apac`, so the cl
 
 ### As a SRE team member, I want to create a managedClusterSet for Disaster Recovery purposes. The managedClusterSet should select two or more clusters in different regions. 
 1. Cluster admin should give SRE team members the following permissions
-- `create`, `update`, `delete` permissions for ManagedClusters
+- `create`, `update`, `delete` permissions for managedClusters
 - `create`, `update`, `delete` permissions for subresource `managedclusters/label` with value `clusterAttribute=backup`
-- `create`, `update`, `delete` permissions for ManagedClustersets
+- `create`, `update`, `delete` permissions for managedClusterSets
 - `create` permission for subresource `managedclusterset/clusterLabel` with value `clusterAttribute=backup`
 
 The permissions should be like:
@@ -171,7 +175,7 @@ rules:
    verbs: ["create"]
 ```
 2. As a SRE team member, I could create three clusters `backupCluster1`, `backupCluster2`, `backupCluster3` in the region: `apac`,`us`,`europe`
-3. As a SRE team member, I need to set a label `clusterAttribute=backup` for these clusters
+3. As a SRE team member, I need to set a label `clusterAttribute=backup` for these managedClusters
 4. As a SRE team member, I could create a managedClusterSet to select all the backup clusters
 ```yaml
 apiVersion: cluster.open-cluster-management.io/v1alpha1
@@ -182,12 +186,12 @@ spec:
   clusterLabel: clusterAttribute=backup
 ```
 
-This managedClusterSet includes all clusters with label `clusterAttribute=backup`, So I could use this clusterset to select all backup clusters.
+This managedClusterSet includes all clusters with label `clusterAttribute=backup`, So I could use this managedClusterSet to select all backup clusters.
 
 
 ### As a DEV team member, I want to create a managedClusterSet to group clusters based on the middleware enabled on these clusters, so I could run special applications in these clusters.
 1. Cluster admin should give SRE team members the following permissions to allow them create clusters and deploy applications in these clusters
-- `create`/`update`/`delete` permissions for ManagedClusters
+- `create`/`update`/`delete` permissions for managedClusters
 - `create`/`update`/`delete` permissions for subresource `managedclusters/label` with value `middlewareEnabled=true`
 
 The permissions should be like:
@@ -207,8 +211,8 @@ rules:
    verbs: ["*"]
 ```
 
-2. Cluster admin give DEV team the following permission to allow them create clusterset using label `middlewareEnabled=true`
-- `create`/`update`/`delete` permission for ManagedClustersets
+2. Cluster admin give DEV team the following permission to allow them create managedClusterSet using label `middlewareEnabled=true`
+- `create`/`update`/`delete` permission for managedClusterSets
 - `create` permission for subresource `managedclusterset/clusterLabel` with value `middlewareEnabled=true`
 
 The permission should be like:
@@ -238,7 +242,7 @@ metadata:
 spec:
   clusterLabel: middlewareEnabled=true
 ```
-This managedClusterSet includes all clusters with label `middlewareEnabled=true`, So I could use this clusterset to run special applications which must enable middleware.
+This managedClusterSet includes all clusters with label `middlewareEnabled=true`, So I could use this managedClusterSet to run special applications which must enable middleware.
 
 ## Test Plan
 - Unit tests will cover the functionality of the controllers.
@@ -253,23 +257,12 @@ This managedClusterSet includes all clusters with label `middlewareEnabled=true`
 ## Impact to other components
 1. [Placement](https://github.com/open-cluster-management-io/placement) 
 
-Currentlly, `placement` use label `cluster.open-cluster-management.io/clusterset=<clusterset Name>` to select managedclusters, after the proposal applied, `placement` should use the `clusterlabel` in clusterset spec to select target clusters.
+Currently, `placement` use label `cluster.open-cluster-management.io/clusterset=<clusterset Name>` to select managedclusters, after the proposal applied, `placement` should use the `clusterlabel` in managedClusterSet spec to select target clusters.
 
-2. Any components which create managedcluster with labels or update managedcluster's labels should have permissions `managedclusters/label` to related labels.
-
-3. [registration](https://github.com/open-cluster-management-io/registration)
-
-Currentlly, if user want to add label `cluster.open-cluster-management.io/clusterset=xxx` to one managedCluster, he/she must have `create` permission for subresource `managedclustersets/join`. After the proposal, it will also works. 
-Additionally, if use have `create` permission for subresource `managedclustersets/clusterlabel` with value `cluster.open-cluster-management.io/clusterset=<clusterset Name>`, he/she could also update label `cluster.open-cluster-management.io/clusterset=<clusterset Name>`.
-
-So if user want to add label `cluster.open-cluster-management.io/clusterset=<clusterset Name>` for one managedcluster, he/she should have one of the following permissions:
-- `create` permission for subresource `managedclustersets/join` with value `<clusterset Name>`
-- `create` permission for subresource `managedclustersets/clusterlabel` with value `cluster.open-cluster-management.io/clusterset=<clusterset Name>`
-
-Notes: if the clusterset's `clusterLabel` is not set, the user should only have create permissions to the clusterset.
+2. Any components which create managedCluster with labels or update managedCluster's labels should have permissions `managedclusters/label` to related labels.
 
 ## Upgrade / Downgrade Strategy
-As the update managedcluster labels permission changed. So any role which need to update managedcluster or create managedcluster with label need to add the external permissions like: 
+As the update managedCluster labels permission changed. So any role which need to update managedclusters or create managedclusters with labels need to add the external permissions like: 
 ```yaml
 kind: ClusterRole
 apiVersion: rbac.authorization.k8s.io/v1
@@ -286,7 +279,6 @@ rules:
 ### Alpha
 1. The new APIs is reviewed and accepted;
 2. Implementation is completed to support the RBAC;
-3. The Mitigation section will not be implemented
 
 ### Beta
 1. Need to revisit the API shape before upgrading to beta based on user’s feedback.
