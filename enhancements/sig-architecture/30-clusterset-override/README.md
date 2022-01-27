@@ -37,21 +37,32 @@ type ManagedClusterSetSpec struct {
 type ManagedClusterSelector struct{
     // "" means to use the current mechanism of matching label <cluster.open-cluster-management.io/clusterset:<ManagedClusterSet Name>.
     // "LabelSelector" means to use the LabelSelector to select target managedClusters
-    // "ClusterNames" means to use "ClusterNames" where the managedClusters Name is set
+    // "ClusterLabel" means to use a particular cluster label. It is guaranteed that clustersets with same label key are exclusive with each others
     // +optional
     SelectorType SelectorType `json:"selectorType"`
 
-    LabelSelector *metav1.LabelSelector `json:"labelSelector"`
+    // For managedCluster labels which has prefix `cluster.open-cluster-management.io/*`, we will has secondary Access control check. And other labels do not have any secondary Access control protection.
+    // ClusterLabel defines one label which clusterset could use to select target managedClusters. In this way, we could:
+    // 1. Guarantee clustersets with same label key are exclusive
+    // 2. Enable additional permission check when cluster joining/leaving a clusterset (the label key should start with the reserved prefix "cluster.open-cluster-management.io/" and "info.open-cluster-management.io/");
+    ClusterLabel *ClusterLabel `json:"clusterLabel"`
 
-    ClusterNames [] string `json:"clusterNames"`
+    // LabelSelector define the general labelSelector which clusterset will use to select target managedClusters
+    LabelSelector *metav1.LabelSelector `json:"labelSelector"`
 }
 
 type SelectorType string
 
 const (
-	  LabelSelector        SelectorType = "LabelSelector"
-	  ClusterNames        SelectorType = "ClusterNames"
+	  LabelSelector       SelectorType = "LabelSelector"
+    ClusterLabel        SelectorType = "ClusterLabel"
 )
+
+//ClusterLabel defines one cluster label
+type ClusterLabel struct {
+	  Key string `json:"key"`
+    Value string `json:"value"`
+}
 ```
 
 ### RBAC
@@ -112,9 +123,10 @@ But for some managedClusterSet(like: Disaster Recovery ManagedClusterSet[a], Res
 
 So we propose adding restrictions for some labels, and if user want to add these kinds of labels, he/she must have a "special" permission. Then the managedClusterSet which do not want anyone to join could use these labels to select managedClusters.
 
-We propose adding restrictions for labels which key have prefix `cluster.open-cluster-management.io/`. (This prefix may be configured. But in this proposal, it is const)
-
-So if someone wants to add the label `cluster.open-cluster-management.io/*:*` to a managedCluster. He/She should have the "special" permission.
+We propose adding restrictions for labels which key have prefix `cluster.open-cluster-management.io/` and `info.open-cluster-management.io/`
+- `cluster.open-cluster-management.io/` are encouraged for non cluster admin users. Like for "Resource Group managedClusterSet", non cluster admin user could add a label like: `cluster.open-cluster-management.io/clusterset: dev`
+- The spoke agents are encouraged to use labels which has prefix `info.open-cluster-management.io/` and the agents should have permissions on their own managedcluster to modify these kind of labels.
+  The label key should be: `info.open-cluster-management.io/region`, `info.open-cluster-management.io/cloud`, `info.open-cluster-management.io/vendor`
 
 Then we need a way to define the "special" permission.
 Investigate the existing rbac rule in current k8s, we use a rule which is similar to [csr-approver](https://github.com/kubernetes/website/blob/3ca34b9a3be454055ba234f1d2ff7d55809b5040/content/zh/examples/access/certificate-signing-request/clusterrole-approve.yaml#L25)
@@ -192,7 +204,7 @@ spec:
     clusterNames: "backupCluster1", "backupCluster2", "backupCluster3"
 ```
 
-2. Cluster admin should give the following permissions to SRE team.
+3. Cluster admin should give the following permissions to SRE team.
 - `get` permission to three managedClusters `backupCluster1`, `backupCluster2`, `backupCluster3`
 - `get` permission to managedClusterSet `backupset`
 - `create` permission to subresource `managedclustersets/bind` to managedClusterSet `backupset`
@@ -215,6 +227,7 @@ rules:
    resourceNames: ["backupset"]
    verbs: ["create"]
 ```
+
 4. As a SRE team member, I could bind the managedClusterSet to my namespace and do disaster and recovery work in these clusters.
 
 ### Example3: As a DEV team member, I want to use a managedClusterSet to select clusters based on the middleware enabled on these clusters, so I could run special applications in these clusters.
@@ -233,7 +246,8 @@ spec:
       matchLabels:
         middlewareEnabled: "true"
 ```
-4. Cluster admin should give following permissions to DEV team, so these team members could run applications in the managedClusterSet's clusters.
+
+5. Cluster admin should give following permissions to DEV team, so these team members could run applications in the managedClusterSet's clusters.
 - `get` permission to managedClusterSet `middlewareenabledset`
 - `create` permission to subresource `managedclustersets/bind` to managedClusterSet `middlewareenabledset`
 ```yaml
@@ -251,8 +265,8 @@ rules:
    resourceNames: ["middlewareenabledset"]
    verbs: ["create"]
 ```
-5. As DEV team member, I could `bind` the managedClusterSet `middlewareenabledset` to my namespace and run application in the managedClusterSet.
 
+6. As DEV team member, I could `bind` the managedClusterSet `middlewareenabledset` to my namespace and run application in the managedClusterSet.
 
 ### Example4: As cluster admin, I want to create two managedClusterSets for DEV and QA squad. and the DEV/QA could deploy applications in their own managedClusterSet.
 1. Cluster admin create two managedClusterSets for Dev team and QA team
@@ -342,9 +356,31 @@ rules:
  - Update managedClusterSet spec `clusterSelector` field
 
 ## Impact to other components
-1. [Placement](https://github.com/open-cluster-management-io/placement) 
-
+1. Impact to components which get managedClusters from a managedClusterSet.
+[Placement](https://github.com/open-cluster-management-io/placement) 
 Currently, `placement` use label `cluster.open-cluster-management.io/clusterset:<clusterset Name>` to select managedClusters, after the proposal applied, `placement` should use the `ClusterSelector` in managedClusterSet spec to select target clusters.
+
+2. Impact to components which only use managedClusterSet for exclusive purpose.
+a. [multicloud-operators-foundation](https://github.com/stolostron/multicloud-operators-foundation)
+multicloud-operators-foundation use managedClusterSet for resource group purpose. So it should only watch the following managedClusterSet:
+- `spec.ClusterSelector.SelectorType` is `ClusterLabel`, the `ClusterLabel.key` must be `cluster.open-cluster-management.io/clusterset`
+- `spec.ClusterSelector.SelectorType` is ""
+
+b. [submariner-addon](https://github.com/stolostron/submariner-addon)
+Currentlly, `submariner-addon` try to use managedClusterSet group clusters based on network. And in different managedClusterSet, the clusters should be exclusive. So it should only watch the following managedClusterSet:
+- `spec.ClusterSelector.SelectorType` is `ClusterLabel` and the `ClusterLabel.key` must be `cluster.open-cluster-management.io/clusterset`, the `ClusterLabel.value` must be managedClusterSet name.
+- `spec.ClusterSelector.SelectorType` is ""
+
+3. Impact to components which have RBAC check for adding managedClusters to a managedClusterSet.
+[multicloud-operators-foundation](https://github.com/stolostron/multicloud-operators-foundation)
+multicloud-operators-foundation use managedClusterSet for resource group purpose, and it gives the users `join` permission to a managedClusterSet if the user has admin permission to the managedClusterSet. 
+So after the proposal, it should change the permission the following rule:
+```yaml
+ - apiGroups: ["cluster.open-cluster-management.io"]
+   resources: ["managedclusters/label"]
+   resourceNames: ["cluster.open-cluster-management.io/clusterset:<ManagedClusterSet Name>"]
+   verbs: ["create"]
+```
 
 ## Option1 Upgrade / Downgrade Strategy 
 The new api is compatible with the previous version. So there is no external work needed when upgrading
